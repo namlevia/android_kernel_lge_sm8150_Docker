@@ -52,6 +52,7 @@ jobs:
             libelf-dev libssl-dev lld llvm clang make python3 rsync unzip xz-utils zip \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
+
       - name: Show toolchain versions
         run: |
           clang --version
@@ -135,7 +136,7 @@ jobs:
           - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
           ## Included release package
-          - Installer zip built from packaging template under packaging/flash/${BUILD_MODE}
+          - Installer zip rebuilt from the upstream sidex15 V50 installer template for ${BUILD_MODE}
           - Raw kernel build artifacts remain available in Actions artifacts
 
           ## Notes
@@ -151,23 +152,47 @@ jobs:
       - name: Package release zip
         if: ${{ inputs.publish_release }}
         env:
+          GH_TOKEN: ${{ github.token }}
           BUILD_MODE: ${{ inputs.build_mode }}
+          KSU: ${{ inputs.ksu }}
         run: |
           set -euo pipefail
           stage_dir="packaged/staging"
           out_dir="packaged/out"
+          dl_dir="packaged/download"
           rm -rf packaged
-          mkdir -p "$stage_dir" "$out_dir"
+          mkdir -p "$stage_dir" "$out_dir" "$dl_dir"
 
           if [ "$BUILD_MODE" = "anykernel" ]; then
-            rsync -a packaging/flash/anykernel/ "$stage_dir/"
+            if [ "$KSU" = "true" ]; then
+              template_asset="V50-n3x7g3n-AnyKernel3-KSU.zip"
+            else
+              template_asset="V50-n3x7g3n-AnyKernel3-OpenELA.zip"
+            fi
+          else
+            if [ "$KSU" = "true" ]; then
+              template_asset="V50-n3x7g3n-magisk-KSU.zip"
+            else
+              template_asset="V50-n3x7g3n-magisk-OpenELA.zip"
+            fi
+          fi
+
+          gh release download v4.14.355-OpenELA-v7 \
+            --repo sidex15/android_kernel_lge_sm8150 \
+            --pattern "$template_asset" \
+            --dir "$dl_dir"
+
+          unzip -q "$dl_dir/$template_asset" -d "$stage_dir"
+
+          if [ "$BUILD_MODE" = "anykernel" ]; then
             cp -f out/arch/arm64/boot/Image "$stage_dir/Image"
             cp -f release/Dragon/touch_module_s3706.ko "$stage_dir/touch_module_s3706.ko"
           else
-            rsync -a packaging/flash/magisk/ "$stage_dir/"
             cp -f out/arch/arm64/boot/Image.gz-dtb "$stage_dir/Image.gz-dtb"
             cp -f release/Dragon/touch_module_s3706.ko "$stage_dir/touch_module_s3706.ko"
           fi
+
+          rm -f "$dl_dir/$template_asset"
 
           (
             cd "$stage_dir"
