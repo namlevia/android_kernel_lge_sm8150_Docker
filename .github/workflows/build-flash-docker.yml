@@ -1,0 +1,83 @@
+name: Build LG flash Docker kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu:
+        description: "Build KernelSU variant"
+        required: true
+        default: false
+        type: boolean
+      build_mode:
+        description: "Artifact style"
+        required: true
+        default: anykernel
+        type: choice
+        options:
+          - anykernel
+          - magisk
+      jobs:
+        description: "Parallel make jobs"
+        required: true
+        default: "8"
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache cpio curl file flex gawk git \
+            libelf-dev libssl-dev lld llvm clang make python3 rsync unzip xz-utils zip \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+      - name: Show toolchain versions
+        run: |
+          clang --version
+          ld.lld --version
+          llvm-ar --version
+          aarch64-linux-gnu-gcc --version | head -n 1
+          arm-linux-gnueabi-gcc --version | head -n 1
+
+      - name: Prepare build dirs
+        run: |
+          mkdir -p release/Dragon
+
+      - name: Build flash Docker kernel
+        env:
+          JOBS: ${{ inputs.jobs }}
+          BUILD_MODE: ${{ inputs.build_mode }}
+          KSU: ${{ inputs.ksu }}
+        run: |
+          set -euxo pipefail
+          args=(--variant flash --jobs "$JOBS" --clang-path /usr/bin --build "$BUILD_MODE")
+          if [ "$KSU" = "true" ]; then
+            args+=(--ksu)
+          fi
+          bash ./build_kernel_docker_quick.sh "${args[@]}"
+
+      - name: Collect artifacts
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+          find out/arch/arm64/boot -maxdepth 1 \( -name 'Image' -o -name 'Image.gz' -o -name 'Image.gz-dtb' \) -type f -exec cp -v {} artifacts/ \; || true
+          find release/Dragon -maxdepth 2 -type f \( -name 'Image*' -o -name '*.ko' \) -exec cp -v {} artifacts/ \; || true
+          cp -v .config artifacts/kernel.config || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: flash-docker-${{ inputs.build_mode }}-${{ inputs.ksu && 'ksu' || 'stock' }}
+          path: artifacts/
+          if-no-files-found: warn
