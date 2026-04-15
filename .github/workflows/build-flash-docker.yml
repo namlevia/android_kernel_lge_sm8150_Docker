@@ -21,6 +21,16 @@ on:
         required: true
         default: "8"
         type: string
+      publish_release:
+        description: "Create/update a GitHub Release after a successful build"
+        required: true
+        default: false
+        type: boolean
+      release_tag:
+        description: "Optional release tag override (leave empty for auto tag)"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   build:
@@ -75,9 +85,69 @@ jobs:
           find release/Dragon -maxdepth 2 -type f \( -name 'Image*' -o -name '*.ko' \) -exec cp -v {} artifacts/ \; || true
           cp -v .config artifacts/kernel.config || true
 
+      - name: Generate release metadata
+        if: ${{ inputs.publish_release }}
+        env:
+          BUILD_MODE: ${{ inputs.build_mode }}
+          KSU: ${{ inputs.ksu }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+        run: |
+          set -euxo pipefail
+          kernel_version=$(make kernelrelease)
+          flavor="flash-docker"
+          variant_suffix="stock"
+          if [ "$KSU" = "true" ]; then
+            variant_suffix="ksu"
+          fi
+          if [ -n "$RELEASE_TAG_INPUT" ]; then
+            release_tag="$RELEASE_TAG_INPUT"
+          else
+            release_tag="${kernel_version}-${flavor}-${variant_suffix}-${BUILD_MODE}-${GITHUB_RUN_NUMBER}"
+          fi
+          release_name="$release_tag"
+          cat > release-notes.md <<EOF
+          Automated build for LG flash Docker kernel.
+
+          ## Build details
+          - Branch: ${GITHUB_REF_NAME}
+          - Kernel release: ${kernel_version}
+          - Variant: flash
+          - KSU: ${KSU}
+          - Build mode: ${BUILD_MODE}
+          - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          ## Included artifacts
+          - Kernel image outputs from out/arch/arm64/boot
+          - Release outputs from release/Dragon
+          - kernel.config
+
+          ## Notes
+          - This release is CI-generated.
+          - Flashing/packaging validation on hardware is still a separate step.
+          EOF
+          {
+            echo "release_tag=$release_tag"
+            echo "release_name=$release_name"
+          } >> "$GITHUB_ENV"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: flash-docker-${{ inputs.build_mode }}-${{ inputs.ksu && 'ksu' || 'stock' }}
-          path: artifacts/
+          path: |
+            artifacts/
+            release-notes.md
           if-no-files-found: warn
+
+      - name: Publish GitHub Release
+        if: ${{ inputs.publish_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.release_tag }}
+          name: ${{ env.release_name }}
+          body_path: release-notes.md
+          files: |
+            artifacts/*
+          draft: false
+          prerelease: ${{ inputs.ksu }}
+          generate_release_notes: false
