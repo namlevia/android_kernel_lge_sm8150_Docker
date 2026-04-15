@@ -92,8 +92,12 @@ jobs:
           KSU: ${{ inputs.ksu }}
           RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
         run: |
-          set -euxo pipefail
-          kernel_version=$(make kernelrelease)
+          set -euo pipefail
+          if [ -f out/include/config/kernel.release ]; then
+            kernel_version=$(tr -d '\n' < out/include/config/kernel.release)
+          else
+            kernel_version=$(make -s O=out kernelrelease 2>/dev/null | tail -n 1 | tr -d '\n')
+          fi
           flavor="flash-docker"
           variant_suffix="stock"
           if [ "$KSU" = "true" ]; then
