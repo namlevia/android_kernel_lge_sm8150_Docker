@@ -103,6 +103,19 @@ jobs:
           if [ "$KSU" = "true" ]; then
             variant_suffix="ksu"
           fi
+          if [ "$BUILD_MODE" = "anykernel" ]; then
+            if [ "$KSU" = "true" ]; then
+              installer_name="V50-n3x7g3n-AnyKernel3-KSU.zip"
+            else
+              installer_name="V50-n3x7g3n-AnyKernel3-OpenELA.zip"
+            fi
+          else
+            if [ "$KSU" = "true" ]; then
+              installer_name="V50-n3x7g3n-magisk-KSU.zip"
+            else
+              installer_name="V50-n3x7g3n-magisk-OpenELA.zip"
+            fi
+          fi
           if [ -n "$RELEASE_TAG_INPUT" ]; then
             release_tag="$RELEASE_TAG_INPUT"
           else
@@ -115,15 +128,15 @@ jobs:
           ## Build details
           - Branch: ${GITHUB_REF_NAME}
           - Kernel release: ${kernel_version}
-          - Variant: flash
+          - Variant: flash (LG V50)
           - KSU: ${KSU}
           - Build mode: ${BUILD_MODE}
+          - Installer zip: ${installer_name}
           - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
-          ## Included artifacts
-          - Kernel image outputs from out/arch/arm64/boot
-          - Release outputs from release/Dragon
-          - kernel.config
+          ## Included release package
+          - Installer zip built from packaging template under packaging/flash/${BUILD_MODE}
+          - Raw kernel build artifacts remain available in Actions artifacts
 
           ## Notes
           - This release is CI-generated.
@@ -132,19 +145,35 @@ jobs:
           {
             echo "release_tag=$release_tag"
             echo "release_name=$release_name"
+            echo "installer_name=$installer_name"
           } >> "$GITHUB_ENV"
 
       - name: Package release zip
         if: ${{ inputs.publish_release }}
+        env:
+          BUILD_MODE: ${{ inputs.build_mode }}
         run: |
           set -euo pipefail
-          mkdir -p packaged
-          zip_name="${release_tag}.zip"
+          stage_dir="packaged/staging"
+          out_dir="packaged/out"
+          rm -rf packaged
+          mkdir -p "$stage_dir" "$out_dir"
+
+          if [ "$BUILD_MODE" = "anykernel" ]; then
+            rsync -a packaging/flash/anykernel/ "$stage_dir/"
+            cp -f out/arch/arm64/boot/Image "$stage_dir/Image"
+            cp -f release/Dragon/touch_module_s3706.ko "$stage_dir/touch_module_s3706.ko"
+          else
+            rsync -a packaging/flash/magisk/ "$stage_dir/"
+            cp -f out/arch/arm64/boot/Image.gz-dtb "$stage_dir/Image.gz-dtb"
+            cp -f release/Dragon/touch_module_s3706.ko "$stage_dir/touch_module_s3706.ko"
+          fi
+
           (
-            cd artifacts
-            zip -r9 "../packaged/${zip_name}" .
+            cd "$stage_dir"
+            zip -r9 "../out/${installer_name}" .
           )
-          echo "release_zip=packaged/${zip_name}" >> "$GITHUB_ENV"
+          echo "release_zip=${out_dir}/${installer_name}" >> "$GITHUB_ENV"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
